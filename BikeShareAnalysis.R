@@ -4,13 +4,12 @@ library(tidymodels)
 library(dplyr)
 
 bike_data <- vroom("train.csv")
+new_bike_data <- vroom("test.csv")
 
 # dyplyr Cleaning Step
-bike_data_clean <- bike_data %>%
-  mutate(weather = ifelse(weather == 4, 3, weather))
 bike_data <- bike_data %>%
   select(-casual, -registered)
-new_bike_data <- vroom("test.csv")
+
 
 # Feature Engineering Step
 my_bike_recipe <- recipe(count~., data = bike_data) %>%
@@ -44,5 +43,25 @@ bike_predictions <- predict(bike_workflow,
   mutate(count = pmax(0, count)) %>%
   mutate(datetime = as.character(format(datetime)))
 vroom_write(x = bike_predictions, file = "TestPreds.csv", delim = ",")
+
+
+# Poisson Regression Section
+library(poissonreg)
+
+pois_mod <- poisson_reg() %>%
+  set_engine("glm")
+
+bike_pois_workflow <- workflow() %>%
+  add_recipe(my_bike_recipe) %>%
+  add_model(pois_mod) %>%
+  fit(data = bike_data)
+
+bike_pois_predictions <- predict(bike_pois_workflow,
+                                 new_data = new_bike_data) %>%
+  bind_cols(., new_bike_data) %>%
+  select(datetime, .pred) %>%
+  rename(count = .pred) %>%
+  mutate(datetime = as.character(format(datetime)))
+vroom_write(x = bike_pois_predictions, file = "TestPredsPois.csv", delim = ",")
 
 
