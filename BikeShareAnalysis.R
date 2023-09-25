@@ -65,3 +65,41 @@ bike_pois_predictions <- predict(bike_pois_workflow,
 vroom_write(x = bike_pois_predictions, file = "TestPredsPois.csv", delim = ",")
 
 
+# Penalized Regression Section
+library(glmnet)
+
+my_bike_recipe <- recipe(count~., data = bike_data) %>%
+  step_mutate(weather, levels = ifelse(weather == 4, 3, weather)) %>%
+  step_time(datetime, features = "hour") %>%
+  step_mutate(hour = datetime_hour) %>%
+  step_rm(datetime_hour) %>%
+  step_mutate(daytime = ifelse(hour > 6 & hour < 19, "1", "0")) %>%
+  step_mutate(daytime = as.factor(daytime)) %>%
+  step_mutate(workingday = as.factor(workingday)) %>%
+  step_mutate(holiday = as.factor(holiday)) %>%
+  step_mutate(season = as.factor(season)) %>% 
+  step_rm(datetime) %>%
+  step_dummy(all_nominal_predictors()) %>%
+  step_normalize(all_numeric_predictors())
+
+log_bike_data <- bike_data %>%
+  mutate(count = log(count))
+
+preg_model <- poisson_reg(penalty = 1, mixture = 0) %>%
+  set_engine("glmnet")
+
+preg_wf <- workflow() %>%
+  add_recipe(my_bike_recipe) %>%
+  add_model(preg_model) %>%
+  fit(data = log_bike_data)
+
+log_preds <- predict(preg_wf, 
+                     new_data = new_bike_data) %>%
+  mutate(.pred = exp(.pred)) %>%
+  bind_cols(., new_bike_data) %>%
+  select(datetime, .pred) %>%
+  rename(count = .pred) %>%
+  mutate(count = pmax(0, count)) %>%
+  mutate(datetime = as.character(format(datetime)))
+
+vroom_write(log_preds, "Penalized_Log_Pois_Preds_Lam1_Mixzero.csv", delim = ",")
