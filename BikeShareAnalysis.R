@@ -235,3 +235,68 @@ preds <- predict(final_wf,
   mutate(datetime = as.character(format(datetime)))
 
 vroom_write(preds, "TreePreds.csv", delim = ",")
+
+
+# Random Forests Modification
+library(rpart)
+library(ranger)
+
+bike_data <- vroom("train.csv")
+new_bike_data <- vroom("test.csv")
+
+bike_data <- bike_data %>%
+  select(-casual, -registered)
+
+log_bike_data <- bike_data %>%
+  mutate(count = log(count))
+
+my_recipe <- recipe(count~., data = bike_data) %>%
+  step_mutate(weather, levels = ifelse(weather == 4, 3, weather)) %>%
+  step_time(datetime, features = "hour") %>%
+  step_mutate(hour = datetime_hour) %>%
+  step_rm(datetime_hour) %>%
+  step_mutate(daytime = ifelse(hour > 6 & hour < 19, "1", "0")) %>%
+  step_mutate(daytime = as.factor(daytime)) %>%
+  step_mutate(workingday = as.factor(workingday)) %>%
+  step_mutate(holiday = as.factor(holiday)) %>%
+  step_mutate(season = as.factor(season)) %>% 
+  step_rm(datetime)
+
+my_mod <- rand_forest(mtry = tune(),
+                      min_n = tune(),
+                      trees = 500) %>%
+  set_engine("ranger") %>%
+  set_mode("regression")
+
+forest_wf <- workflow() %>%
+  add_recipe(my_recipe) %>%
+  add_model(my_mod)
+
+tuning_grid <- grid_regular(mtry(range = c(1,10)),
+                            min_n(),
+                            levels = 5)
+
+folds <- vfold_cv(log_bike_data, v = 5, repeats = 1)
+
+CV_results <- forest_wf %>%
+  tune_grid(resamples = folds,
+            grid = tuning_grid,
+            metrics = metric_set(rmse, mae, rsq))
+
+bestTune <- CV_results %>%
+  select_best("rmse")
+
+final_wf <- forest_wf %>%
+  finalize_workflow(bestTune) %>%
+  fit(data = log_bike_data)
+
+preds <- predict(final_wf, 
+                 new_data = new_bike_data) %>%
+  mutate(.pred = exp(.pred)) %>%
+  bind_cols(., new_bike_data) %>%
+  select(datetime, .pred) %>%
+  rename(count = .pred) %>%
+  mutate(count = pmax(0, count)) %>%
+  mutate(datetime = as.character(format(datetime)))
+
+vroom_write(preds, "ForestPreds.csv", delim = ",")
